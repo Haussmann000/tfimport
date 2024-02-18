@@ -31,13 +31,8 @@ func OutputResult(vpcs []types.Vpc) (VpcResults VpcResults) {
 }
 
 type ImportBlock struct {
-	Id string
-	To string
+	Id string `json:"id"`
+	To string `json:"to"`
 }
-
-// type VpcResult struct {
-// 	VpcId     string
-// 	CidrBlock string
-// }
 
 type VpcResults []types.Vpc

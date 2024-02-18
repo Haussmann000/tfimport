@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"strconv"
@@ -18,12 +19,16 @@ func OutputFile(result service.VpcResults) error {
 	for i, vpc := range result {
 		template := service.ImportBlock{}
 		template.Id = *vpc.VpcId
-		template.To = "aws_vpc.my_vpc" + strconv.Itoa(i)
+		template.To = VPC_RESOUCE + ".my_resource" + strconv.Itoa(i)
 		block, err := json.Marshal(template)
 		if err != nil {
 			return err
 		}
-		outputs = append(outputs, block)
+		replaced, err := convertJsonTf([]byte(block))
+		if err != nil {
+			return err
+		}
+		outputs = append(outputs, replaced)
 		if _, err := f.Write(outputs[i]); err != nil {
 			return err
 		}
@@ -31,16 +36,12 @@ func OutputFile(result service.VpcResults) error {
 	return nil
 }
 
-// func readTemplate() (template []byte, err error) {
-// 	template, err = os.ReadFile(TEMPLATEDIR)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	return template, nil
-// }
-
-// func convertFile(json []byte, vpcId []byte) (replaced []byte, err error) {
-// 	bytes.Replace(json, []byte(fmt.Sprintf(`${id}`)), vpcId, -1)
-// 	fmt.Printf("%s", replaced)
-// 	return replaced, nil
-// }
+func convertJsonTf(block []byte) (replaced []byte, err error) {
+	block = []byte(block)
+	replaced = bytes.ReplaceAll(block, []byte("\"id\":"), []byte("  id = "))
+	replaced = bytes.ReplaceAll(replaced, []byte("\"to\":"), []byte("  to = "))
+	replaced = bytes.ReplaceAll(replaced, []byte(","), []byte("\n"))
+	replaced = bytes.ReplaceAll(replaced, []byte("{"), []byte("import {\n"))
+	replaced = bytes.ReplaceAll(replaced, []byte("}"), []byte("\n}\n\n"))
+	return replaced, nil
+}
