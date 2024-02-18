@@ -3,10 +3,15 @@ package main
 import (
 	"fmt"
 
-	"github.com/Haussmann000/tfimport/service"
+	lib "github.com/Haussmann000/tfimport/lib"
+	service "github.com/Haussmann000/tfimport/services"
 )
 
 func main() {
 	result, err := service.DescribeMyVpcs()
-	fmt.Println(result)
+	lib.OutputFile(result)
+	if err != nil {
+		fmt.Println(err)
+	}
+
 }
