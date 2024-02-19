@@ -5,21 +5,25 @@ import (
 	"encoding/json"
 	"os"
 	"strconv"
-
-	service "github.com/Haussmann000/tfimport/services"
 )
 
-func OutputFile(result service.VpcResults) error {
+type Output struct{}
+
+type Result struct {
+	Id *string
+}
+
+func (o Output) OutputFile(tf_resource_name string, result []Result) error {
 	f, err := os.OpenFile("output.tf", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 	outputs := [][]byte{}
-	for i, vpc := range result {
-		template := service.ImportBlock{}
-		template.Id = *vpc.VpcId
-		template.To = VPC_RESOUCE + ".my_resource" + strconv.Itoa(i)
+	for i, resource := range result {
+		template := ImportBlock{}
+		template.Id = resource.Id
+		template.To = tf_resource_name + ".my_resource" + strconv.Itoa(i)
 		block, err := json.Marshal(template)
 		if err != nil {
 			return err
@@ -44,4 +48,9 @@ func convertJsonTf(block []byte) (replaced []byte, err error) {
 	replaced = bytes.ReplaceAll(replaced, []byte("{"), []byte("import {\n"))
 	replaced = bytes.ReplaceAll(replaced, []byte("}"), []byte("\n}\n\n"))
 	return replaced, nil
+}
+
+type ImportBlock struct {
+	Id *string `json:"id"`
+	To string  `json:"to"`
 }
