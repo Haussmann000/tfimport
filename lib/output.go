@@ -19,7 +19,6 @@ func OutputFile(tf_resource_name string, result []Result) error {
 		return err
 	}
 	defer f.Close()
-	outputs := [][]byte{}
 	for i, resource := range result {
 		template := ImportBlock{}
 		template.Id = resource.Id
@@ -32,8 +31,7 @@ func OutputFile(tf_resource_name string, result []Result) error {
 		if err != nil {
 			return err
 		}
-		outputs = append(outputs, replaced)
-		if _, err := f.Write(outputs[i]); err != nil {
+		if _, err := f.Write(replaced); err != nil {
 			return err
 		}
 	}

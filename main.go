@@ -17,10 +17,22 @@ func main() {
 	if err != nil {
 		fmt.Println(err)
 	}
+	igws := service.IgwOutput{}
+	igwresult, err := igws.Describe()
+	if err != nil {
+		fmt.Println(err)
+	}
+	eips := service.EipOutput{}
+	eipresult, err := eips.Describe()
+	if err != nil {
+		fmt.Println(err)
+	}
 
 	vpcs.OutputFile(result)
 	subnets.OutputFile(subnetresult)
-	vpcs.OutputTfFile(result)
+	igws.OutputFile(igwresult)
+	eips.OutputFile(eipresult)
+	// vpcs.OutputTfFile(result)
 
 	if err != nil {
 		fmt.Println(err)
