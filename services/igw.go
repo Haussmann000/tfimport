@@ -11,10 +11,11 @@ import (
 )
 
 type IgwOutput struct {
-	igws []types.InternetGateway
+	Resource_name string
+	Igws          []types.InternetGateway
 }
 
-func (v IgwOutput) Describe() (vpcs []types.InternetGateway, err error) {
+func (v IgwOutput) NewOutput(resource_name string) (*IgwOutput, error) {
 
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -23,19 +24,21 @@ func (v IgwOutput) Describe() (vpcs []types.InternetGateway, err error) {
 	client := ec2.NewFromConfig(cfg)
 	result, err := client.DescribeInternetGateways(context.TODO(), &ec2.DescribeInternetGatewaysInput{})
 	resources := result.InternetGateways
-	for _, resource := range resources {
-		v.igws = append(v.igws, resource)
-	}
-	return v.igws, err
+	var igws []types.InternetGateway
+	igws = append(igws, resources...)
+	return &IgwOutput{
+		Resource_name: resource_name,
+		Igws:          igws,
+	}, err
 }
 
-func (v IgwOutput) OutputFile(igws []types.InternetGateway) (result []lib.Result, err error) {
+func (v IgwOutput) OutputFile(resources []types.InternetGateway) (result []lib.Result, err error) {
 	results := []lib.Result{}
-	for _, igw := range igws {
+	for _, resource := range resources {
 		result := lib.Result{}
-		result.Id = igw.InternetGatewayId
+		result.Id = resource.InternetGatewayId
 		results = append(results, result)
 	}
-	lib.OutputFile(lib.IGW_RESOUCE, results)
+	lib.OutputFile(v.Resource_name, results)
 	return results, err
 }

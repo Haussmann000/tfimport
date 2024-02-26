@@ -11,10 +11,11 @@ import (
 )
 
 type SubnetOutput struct {
-	subnets []types.Subnet
+	Resource_name string
+	Subnets       []types.Subnet
 }
 
-func (s SubnetOutput) Describe() (subnets []types.Subnet, err error) {
+func (v SubnetOutput) NewOutput(resource_name string) (*SubnetOutput, error) {
 
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -23,19 +24,21 @@ func (s SubnetOutput) Describe() (subnets []types.Subnet, err error) {
 	client := ec2.NewFromConfig(cfg)
 	result, err := client.DescribeSubnets(context.TODO(), &ec2.DescribeSubnetsInput{})
 	resources := result.Subnets
-	for _, resource := range resources {
-		s.subnets = append(s.subnets, resource)
-	}
-	return s.subnets, err
+	var subnets []types.Subnet
+	subnets = append(subnets, resources...)
+	return &SubnetOutput{
+		Resource_name: resource_name,
+		Subnets:       subnets,
+	}, err
 }
 
-func (v SubnetOutput) OutputFile(subnets []types.Subnet) (result []lib.Result, err error) {
+func (v SubnetOutput) OutputFile(resources []types.Subnet) (result []lib.Result, err error) {
 	results := []lib.Result{}
-	for _, subnet := range subnets {
+	for _, resource := range resources {
 		result := lib.Result{}
-		result.Id = subnet.SubnetId
+		result.Id = resource.SubnetId
 		results = append(results, result)
 	}
-	lib.OutputFile(lib.SUBNET_RESOUCE, results)
+	lib.OutputFile(v.Resource_name, results)
 	return results, err
 }

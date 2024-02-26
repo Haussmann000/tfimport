@@ -11,10 +11,11 @@ import (
 )
 
 type EipOutput struct {
-	addresses []types.Address
+	Resource_name string
+	Eips          []types.Address
 }
 
-func (v EipOutput) Describe() (addresses []types.Address, err error) {
+func (v EipOutput) NewOutput(resource_name string) (*EipOutput, error) {
 
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -23,19 +24,21 @@ func (v EipOutput) Describe() (addresses []types.Address, err error) {
 	client := ec2.NewFromConfig(cfg)
 	result, err := client.DescribeAddresses(context.TODO(), &ec2.DescribeAddressesInput{})
 	resources := result.Addresses
-	for _, resource := range resources {
-		v.addresses = append(v.addresses, resource)
-	}
-	return v.addresses, err
+	var subnets []types.Address
+	subnets = append(subnets, resources...)
+	return &EipOutput{
+		Resource_name: resource_name,
+		Eips:          subnets,
+	}, err
 }
 
-func (v EipOutput) OutputFile(eips []types.Address) (result []lib.Result, err error) {
+func (v EipOutput) OutputFile(resources []types.Address) (result []lib.Result, err error) {
 	results := []lib.Result{}
-	for _, eip := range eips {
+	for _, resource := range resources {
 		result := lib.Result{}
-		result.Id = eip.PublicIp
+		result.Id = resource.PublicIp
 		results = append(results, result)
 	}
-	lib.OutputFile(lib.EIP_RESOUCE, results)
+	lib.OutputFile(v.Resource_name, results)
 	return results, err
 }

@@ -11,10 +11,11 @@ import (
 )
 
 type VpcOutput struct {
-	vpcs []types.Vpc
+	Resource_name string
+	Vpcs          []types.Vpc
 }
 
-func (v VpcOutput) Describe() (vpcs []types.Vpc, err error) {
+func (v VpcOutput) NewOutput(resource_name string) (*VpcOutput, error) {
 
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -23,24 +24,21 @@ func (v VpcOutput) Describe() (vpcs []types.Vpc, err error) {
 	client := ec2.NewFromConfig(cfg)
 	result, err := client.DescribeVpcs(context.TODO(), &ec2.DescribeVpcsInput{})
 	resources := result.Vpcs
-	for _, resource := range resources {
-		v.vpcs = append(v.vpcs, resource)
-	}
-	return v.vpcs, err
+	var vpcs []types.Vpc
+	vpcs = append(vpcs, resources...)
+	return &VpcOutput{
+		Resource_name: resource_name,
+		Vpcs:          vpcs,
+	}, err
 }
 
-func (v VpcOutput) OutputFile(vpcs []types.Vpc) (result []lib.Result, err error) {
+func (v VpcOutput) OutputFile(resources []types.Vpc) (result []lib.Result, err error) {
 	results := []lib.Result{}
-	for _, vpc := range vpcs {
+	for _, resource := range resources {
 		result := lib.Result{}
-		result.Id = vpc.VpcId
+		result.Id = resource.VpcId
 		results = append(results, result)
 	}
-	lib.OutputFile(lib.VPC_RESOUCE, results)
+	lib.OutputFile(v.Resource_name, results)
 	return results, err
-}
-
-func (v VpcOutput) OutputTfFile(vpcs []types.Vpc) error {
-	lib.OutputTfFile(vpcs)
-	return nil
 }

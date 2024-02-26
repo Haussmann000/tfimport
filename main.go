@@ -3,39 +3,37 @@ package main
 import (
 	"fmt"
 
+	"github.com/Haussmann000/tfimport/lib"
 	service "github.com/Haussmann000/tfimport/services"
 )
 
 func main() {
-	vpcs := service.VpcOutput{}
-	result, err := vpcs.Describe()
+	result, err := DescribeServices()
 	if err != nil {
 		fmt.Println(err)
 	}
-	subnets := service.SubnetOutput{}
-	subnetresult, err := subnets.Describe()
-	if err != nil {
-		fmt.Println(err)
-	}
-	igws := service.IgwOutput{}
-	igwresult, err := igws.Describe()
-	if err != nil {
-		fmt.Println(err)
-	}
-	eips := service.EipOutput{}
-	eipresult, err := eips.Describe()
-	if err != nil {
-		fmt.Println(err)
-	}
+	fmt.Println(result)
+}
 
-	vpcs.OutputFile(result)
-	subnets.OutputFile(subnetresult)
-	igws.OutputFile(igwresult)
-	eips.OutputFile(eipresult)
-	// vpcs.OutputTfFile(result)
+func DescribeServices() (result []lib.Result, err error) {
+	vpc, err := service.VpcOutput.NewOutput(service.VpcOutput{}, lib.VPC_RESOUCE)
 
 	if err != nil {
-		fmt.Println(err)
+		return nil, err
 	}
 
+	vpc.OutputFile(vpc.Vpcs)
+	if err != nil {
+		return nil, err
+	}
+
+	subnet, err := service.SubnetOutput.NewOutput(service.SubnetOutput{}, lib.SUBNET_RESOUCE)
+	if err != nil {
+		return nil, err
+	}
+	subnet.OutputFile(subnet.Subnets)
+	if err != nil {
+		return nil, err
+	}
+	return result, err
 }
