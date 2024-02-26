@@ -1,3 +1,0 @@
-resource "aws_vpc" "vpc_${number}" {
-  cidr_block = "${cidr_block}"
-}
