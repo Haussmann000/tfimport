@@ -22,7 +22,11 @@ func DescribeServices() (result []lib.Result, err error) {
 		return nil, err
 	}
 
-	vpc.OutputFile(vpc.Vpcs)
+	_, err = vpc.OutputFile(vpc.Vpcs)
+	if err != nil {
+		return nil, err
+	}
+	err = vpc.OutputTfFile(vpc.Vpcs)
 	if err != nil {
 		return nil, err
 	}
@@ -31,7 +35,15 @@ func DescribeServices() (result []lib.Result, err error) {
 	if err != nil {
 		return nil, err
 	}
-	subnet.OutputFile(subnet.Subnets)
+	_, err = subnet.OutputFile(subnet.Subnets)
+	if err != nil {
+		return nil, err
+	}
+	eip, err := service.EipOutput.NewOutput(service.EipOutput{}, lib.EIP_RESOUCE)
+	if err != nil {
+		return nil, err
+	}
+	_, err = eip.OutputFile(eip.Eips)
 	if err != nil {
 		return nil, err
 	}

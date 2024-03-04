@@ -11,12 +11,11 @@ import (
 )
 
 type VpcOutput struct {
-	Resource_name string
-	Vpcs          []types.Vpc
+	ResourceName string
+	Vpcs         []types.Vpc
 }
 
 func (v VpcOutput) NewOutput(resource_name string) (*VpcOutput, error) {
-
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		log.Fatalf("failed to load configuration, %v", err)
@@ -27,8 +26,8 @@ func (v VpcOutput) NewOutput(resource_name string) (*VpcOutput, error) {
 	var vpcs []types.Vpc
 	vpcs = append(vpcs, resources...)
 	return &VpcOutput{
-		Resource_name: resource_name,
-		Vpcs:          vpcs,
+		ResourceName: resource_name,
+		Vpcs:         vpcs,
 	}, err
 }
 
@@ -39,6 +38,18 @@ func (v VpcOutput) OutputFile(resources []types.Vpc) (result []lib.Result, err e
 		result.Id = resource.VpcId
 		results = append(results, result)
 	}
-	lib.OutputFile(v.Resource_name, results)
+	lib.OutputFile(v.ResourceName, results)
 	return results, err
+}
+
+func (v VpcOutput) OutputTfFile(result []types.Vpc) (err error) {
+	var tf lib.VpcTfOutput
+	for i, r := range result {
+		tf = lib.VpcTfOutput{CidrBlock: *r.CidrBlock, Index: i, Tags: r.Tags}
+		err := lib.OutputTfFile(tf, lib.VPC_RESOUCE)
+		if err != nil {
+			return err
+		}
+	}
+	return err
 }

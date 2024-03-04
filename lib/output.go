@@ -2,11 +2,15 @@ package lib
 
 import (
 	"bytes"
+	"embed"
 	"encoding/json"
-	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strconv"
+	"text/template"
+
+	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 )
 
 type Result struct {
@@ -49,32 +53,36 @@ func convertJsonToImportBlock(block []byte) (replaced []byte, err error) {
 	return replaced, nil
 }
 
-func convertJsonToTfFile(block []byte) (replaced []byte, err error) {
-	replaced = bytes.ReplaceAll(block, []byte("CidrBlock"), []byte("cidr_block"))
-	return replaced, nil
-}
-
-func OutputTfFile[T any](x T) error {
-	json, err := json.Marshal(x)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("%s\n", json)
+func OutputTfFile[T TfOutput](x T, resource_name string) error {
 	f, err := os.OpenFile("output.tf", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
 	}
-	replaced, err := convertJsonToTfFile([]byte(json))
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(replaced); err != nil {
-		return err
-	}
+	parseTemplate(f, x, resource_name)
+	defer f.Close()
 	return nil
 }
 
-type ImportBlock struct {
-	Id *string `json:"id"`
-	To string  `json:"to"`
+//go:embed template/*
+var f embed.FS
+
+var (
+	funcMap = map[string]interface{}{
+		"parsetags": func(tags []types.Tag) []types.Tag {
+			// result, err := json.Marshal(tags)
+			// if err != nil {
+			// 	panic(err)
+			// }
+			return tags
+		},
+	}
+)
+
+func parseTemplate[T TfOutput](file io.Writer, output T, temp_path string) (err error) {
+	tmpl, _ := template.ParseFS(f, "template/"+temp_path+".tmpl")
+	err = tmpl.Funcs(funcMap).Execute(file, output)
+	if err != nil {
+		return err
+	}
+	return err
 }

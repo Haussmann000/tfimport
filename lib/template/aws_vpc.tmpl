@@ -1,0 +1,4 @@
+resource "aws_vpc" "vpc_{{.Index}}" {
+  cidr_block = "{{.CidrBlock}}"
+  tags = {{printf "%v" .Tags}}
+}
