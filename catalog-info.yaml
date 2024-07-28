@@ -1,0 +1,10 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: tfimport
+  annotations:
+    github.com/project-slug: Haussmann000/tfimport
+spec:
+  type: other
+  lifecycle: unknown
+  owner: guests
