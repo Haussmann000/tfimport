@@ -3,34 +3,33 @@ package s3
 
 import (
 	"context"
-	"strings"
 )
 
 // Bucket はHCL生成に必要なS3バケットの情報を保持します。
 type Bucket struct {
 	Name string
-	// Tags は今後実装
+	Tags map[string]string
 }
 
-// S3ServiceInterface はS3関連のビジネスロジックを定義します。
-type S3ServiceInterface interface {
+// Service はS3関連のビジネスロジックを定義します。
+type Service interface {
 	ListBuckets(ctx context.Context, resourceName string) ([]Bucket, error)
 }
 
-// S3Service はS3ServiceInterfaceを実装します。
-type S3Service struct {
+// BucketService はServiceを実装します。
+type BucketService struct {
 	repo S3RepositoryInterface
 }
 
-// NewS3Service は新しいS3Serviceを生成します。
-func NewS3Service(repo S3RepositoryInterface) *S3Service {
-	return &S3Service{
+// NewBucketService は新しいBucketServiceを生成します。
+func NewBucketService(repo S3RepositoryInterface) *BucketService {
+	return &BucketService{
 		repo: repo,
 	}
 }
 
 // ListBuckets はS3バケットのリストを取得し、ドメインオブジェクトに変換します。
-func (s *S3Service) ListBuckets(ctx context.Context, resourceName string) ([]Bucket, error) {
+func (s *BucketService) ListBuckets(ctx context.Context, resourceName string) ([]Bucket, error) {
 	awsBuckets, err := s.repo.ListBuckets(ctx)
 	if err != nil {
 		return nil, err
@@ -38,10 +37,17 @@ func (s *S3Service) ListBuckets(ctx context.Context, resourceName string) ([]Buc
 
 	var buckets []Bucket
 	for _, b := range awsBuckets {
-		if resourceName == "" || strings.HasPrefix(*b.Name, resourceName) {
-			buckets = append(buckets, Bucket{
+		if resourceName == "" || (b.Name != nil && *b.Name == resourceName) {
+			tags, err := s.repo.GetBucketTagging(ctx, *b.Name)
+			if err != nil {
+				// handle error, maybe log it
+				continue
+			}
+			bucket := Bucket{
 				Name: *b.Name,
-			})
+				Tags: tags,
+			}
+			buckets = append(buckets, bucket)
 		}
 	}
 	return buckets, nil

@@ -8,9 +8,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
-// S3RepositoryInterface はS3リソースへのアクセスを抽象化します。
+type S3ClientInterface interface {
+	ListBuckets(ctx context.Context, params *s3.ListBucketsInput, optFns ...func(*s3.Options)) (*s3.ListBucketsOutput, error)
+	GetBucketTagging(ctx context.Context, params *s3.GetBucketTaggingInput, optFns ...func(*s3.Options)) (*s3.GetBucketTaggingOutput, error)
+}
+
 type S3RepositoryInterface interface {
 	ListBuckets(ctx context.Context) ([]types.Bucket, error)
+	GetBucketTagging(ctx context.Context, bucketName string) (map[string]string, error)
 }
 
 // S3Repository はS3RepositoryInterfaceを実装します。
@@ -33,4 +38,19 @@ func (r *S3Repository) ListBuckets(ctx context.Context) ([]types.Bucket, error) 
 		return nil, err
 	}
 	return result.Buckets, nil
+}
+
+// GetBucketTagging は指定されたバケットのタグを取得します。
+func (r *S3Repository) GetBucketTagging(ctx context.Context, bucketName string) (map[string]string, error) {
+	output, err := r.client.GetBucketTagging(ctx, &s3.GetBucketTaggingInput{
+		Bucket: &bucketName,
+	})
+	if err != nil {
+		return nil, err
+	}
+	tags := make(map[string]string)
+	for _, tag := range output.TagSet {
+		tags[*tag.Key] = *tag.Value
+	}
+	return tags, nil
 } 

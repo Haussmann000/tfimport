@@ -15,25 +15,25 @@ type Vpc struct {
 	Tags      map[string]string
 }
 
-// EC2ServiceInterface はEC2関連のビジネスロジックを定義します。
-type EC2ServiceInterface interface {
+// Service はEC2関連のビジネスロジックを定義します。
+type Service interface {
 	ListVpcs(ctx context.Context, resourceName string) ([]Vpc, error)
 }
 
-// EC2Service はEC2ServiceInterfaceを実装します。
-type EC2Service struct {
+// VPCService はServiceを実装します。
+type VPCService struct {
 	repo EC2RepositoryInterface
 }
 
-// NewEC2Service は新しいEC2Serviceを生成します。
-func NewEC2Service(repo EC2RepositoryInterface) *EC2Service {
-	return &EC2Service{
+// NewVPCService は新しいVPCServiceを生成します。
+func NewVPCService(repo EC2RepositoryInterface) *VPCService {
+	return &VPCService{
 		repo: repo,
 	}
 }
 
 // ListVpcs はVPCのリストを取得し、ドメインオブジェクトに変換します。
-func (s *EC2Service) ListVpcs(ctx context.Context, resourceName string) ([]Vpc, error) {
+func (s *VPCService) ListVpcs(ctx context.Context, resourceName string) ([]Vpc, error) {
 	var filters []types.Filter
 	if resourceName != "" {
 		filters = append(filters, types.Filter{

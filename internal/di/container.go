@@ -4,40 +4,55 @@ package di
 import (
 	"context"
 	"fmt"
+	"strings"
 
-	"github.com/Haussmann000/tfimport/internal/aws"
 	"github.com/Haussmann000/tfimport/internal/aws/ec2"
+	"github.com/Haussmann000/tfimport/internal/aws/ecs"
+	"github.com/Haussmann000/tfimport/internal/aws/elbv2"
+	"github.com/Haussmann000/tfimport/internal/aws/iam"
 	"github.com/Haussmann000/tfimport/internal/aws/s3"
 	"github.com/Haussmann000/tfimport/internal/hcl"
 	"github.com/Haussmann000/tfimport/internal/writer"
+	"golang.org/x/sync/errgroup"
 )
 
 // RunOptions はコマンドラインから渡されるオプションを保持します。
 type RunOptions struct {
 	ResourceTypes []string
 	ResourceName  string
+	ClusterName   string
+	ServiceName   string
 }
 
 // App はアプリケーションの主要なロジックをカプセル化します。
 type App struct {
-	ec2Svc       ec2.EC2ServiceInterface
-	s3Svc        s3.S3ServiceInterface
-	hclGenerator *hcl.HCLGenerator
-	fileWriter   *writer.FileWriter
+	s3Service  *s3.BucketService
+	vpcService *ec2.VPCService
+	ecsService *ecs.ECSService
+	elbService *elbv2.ELBV2Service
+	iamService *iam.IAMService
+	writer     *writer.FileWriter
+	generator  *hcl.HCLGenerator
 }
 
-// NewApp は新しいAppを生成します。
+// NewApp はAppのコンストラクタです。
 func NewApp(
-	ec2Svc ec2.EC2ServiceInterface,
-	s3Svc s3.S3ServiceInterface,
-	hclGenerator *hcl.HCLGenerator,
-	fileWriter *writer.FileWriter,
+	s3s *s3.BucketService,
+	vs *ec2.VPCService,
+	ecss *ecs.ECSService,
+	elbs *elbv2.ELBV2Service,
+	iams *iam.IAMService,
+	w *writer.FileWriter,
+	g *hcl.HCLGenerator,
 ) *App {
 	return &App{
-		ec2Svc:       ec2Svc,
-		s3Svc:        s3Svc,
-		hclGenerator: hclGenerator,
-		fileWriter:   fileWriter,
+		s3Service:  s3s,
+		vpcService: vs,
+		ecsService: ecss,
+		elbService: elbs,
+		iamService: iams,
+		writer:     w,
+		generator:  g,
 	}
 }
 
@@ -46,11 +61,23 @@ func (a *App) Run(ctx context.Context, options RunOptions) error {
 	for _, resourceType := range options.ResourceTypes {
 		switch resourceType {
 		case "vpc":
-			if err := a.processVpcs(ctx, options.ResourceName); err != nil {
+			if err := a.processVpc(ctx, options.ResourceName); err != nil {
 				return err
 			}
 		case "s3":
-			if err := a.processS3Buckets(ctx, options.ResourceName); err != nil {
+			if err := a.processS3(ctx, options.ResourceName); err != nil {
+				return err
+			}
+		case "ecs":
+			if err := a.processEcs(ctx, options.ClusterName, options.ServiceName); err != nil {
+				return err
+			}
+		case "elbv2":
+			if err := a.processElb(ctx, options.ResourceName); err != nil {
+				return err
+			}
+		case "iam":
+			if err := a.processIam(ctx, options.ResourceName); err != nil {
 				return err
 			}
 		default:
@@ -62,62 +89,118 @@ func (a *App) Run(ctx context.Context, options RunOptions) error {
 	return nil
 }
 
-func (a *App) processVpcs(ctx context.Context, resourceName string) error {
-	// VPC情報を取得
-	vpcs, err := a.ec2Svc.ListVpcs(ctx, resourceName)
+func (a *App) processS3(ctx context.Context, resourceName string) error {
+	buckets, err := a.s3Service.ListBuckets(ctx, resourceName)
 	if err != nil {
-		return fmt.Errorf("failed to list vpcs: %w", err)
+		return err
 	}
-	if len(vpcs) == 0 {
-		fmt.Println("No VPCs found.")
-		return nil
-	}
-
-	// HCLを生成
-	resourceFile, importFile, err := a.hclGenerator.GenerateVpcBlocks(vpcs)
+	hclFile, importFile, err := a.generator.GenerateS3BucketBlocks(buckets)
 	if err != nil {
-		return fmt.Errorf("failed to generate hcl for vpc: %w", err)
+		return err
 	}
-
-	// ファイルに書き出し
-	err = a.fileWriter.WriteFile("vpc_generated.tf", resourceFile)
+	err = a.writer.WriteFile("s3_generated.tf", hclFile)
 	if err != nil {
-		return fmt.Errorf("failed to write resource file for vpc: %w", err)
+		return err
 	}
-	err = a.fileWriter.WriteFile("vpc_import.tf", importFile)
-	if err != nil {
-		return fmt.Errorf("failed to write import file for vpc: %w", err)
-	}
-	return nil
+	return a.writer.WriteFile("s3_import.tf", importFile)
 }
 
-func (a *App) processS3Buckets(ctx context.Context, resourceName string) error {
-	// S3バケット情報を取得
-	buckets, err := a.s3Svc.ListBuckets(ctx, resourceName)
+func (a *App) processVpc(ctx context.Context, resourceName string) error {
+	vpcs, err := a.vpcService.ListVpcs(ctx, resourceName)
 	if err != nil {
-		return fmt.Errorf("failed to list s3 buckets: %w", err)
+		return err
 	}
-	if len(buckets) == 0 {
-		fmt.Println("No S3 buckets found.")
-		return nil
+	hclFile, importFile, err := a.generator.GenerateVpcBlocks(vpcs)
+	if err != nil {
+		return err
+	}
+	err = a.writer.WriteFile("vpc_generated.tf", hclFile)
+	if err != nil {
+		return err
+	}
+	return a.writer.WriteFile("vpc_import.tf", importFile)
+}
+
+func (a *App) processEcs(ctx context.Context, clusterName, serviceName string) error {
+	var clusters []ecs.Cluster
+	if clusterName != "" {
+		cluster, err := a.ecsService.GetClusters(ctx, clusterName, serviceName)
+		if err != nil {
+			return err
+		}
+		if cluster != nil {
+			clusters = cluster
+		}
 	}
 
-	// HCLを生成
-	resourceFile, importFile, err := a.hclGenerator.GenerateS3BucketBlocks(buckets)
+	hclFile, importFile, err := a.generator.GenerateEcsBlocks(clusters)
 	if err != nil {
-		return fmt.Errorf("failed to generate hcl for s3: %w", err)
+		return err
+	}
+	err = a.writer.WriteFile("ecs_generated.tf", hclFile)
+	if err != nil {
+		return err
+	}
+	return a.writer.WriteFile("ecs_import.tf", importFile)
+}
+
+func (a *App) processElb(ctx context.Context, resourceName string) error {
+	var lbs []*elbv2.LoadBalancer
+	var err error
+	if resourceName == "" {
+		lbs, err = a.elbService.ListLoadBalancers(ctx)
+	} else {
+		var lb *elbv2.LoadBalancer
+		lb, err = a.elbService.GetLoadBalancer(ctx, resourceName)
+		if lb != nil {
+			lbs = append(lbs, lb)
+		}
+	}
+	if err != nil {
+		return err
+	}
+	hclFile, importFile, err := a.generator.GenerateElbBlocks(lbs)
+	if err != nil {
+		return err
+	}
+	err = a.writer.WriteFile("elb_generated.tf", hclFile)
+	if err != nil {
+		return err
+	}
+	return a.writer.WriteFile("elb_import.tf", importFile)
+}
+
+func (a *App) processIam(ctx context.Context, nameContains string) error {
+	var policies []iam.Policy
+	var roles []iam.Role
+	var eg errgroup.Group
+
+	eg.Go(func() error {
+		var err error
+		policies, err = a.iamService.ListPolicies(ctx, nameContains)
+		return err
+	})
+
+	eg.Go(func() error {
+		var err error
+		roles, err = a.iamService.ListRoles(ctx, nameContains)
+		return err
+	})
+
+	if err := eg.Wait(); err != nil {
+		return err
 	}
 
-	// ファイルに書き出し
-	err = a.fileWriter.WriteFile("s3_generated.tf", resourceFile)
+	hclFile, importFile, err := a.generator.GenerateIamBlocks(policies, roles)
 	if err != nil {
-		return fmt.Errorf("failed to write resource file for s3: %w", err)
+		return err
 	}
-	err = a.fileWriter.WriteFile("s3_import.tf", importFile)
+
+	err = a.writer.WriteFile("iam_generated.tf", hclFile)
 	if err != nil {
-		return fmt.Errorf("failed to write import file for s3: %w", err)
+		return err
 	}
-	return nil
+	return a.writer.WriteFile("iam_import.tf", importFile)
 }
 
 // BuildApp は依存関係を解決してAppを構築します。
@@ -131,14 +214,20 @@ func BuildApp(ctx context.Context) (*App, error) {
 	// Clients
 	ec2Client := aws.NewEC2Client(awsCfg)
 	s3Client := aws.NewS3Client(awsCfg)
+	ecsClient := aws.NewECSClient(awsCfg)
+	elbv2Client := aws.NewELBV2Client(awsCfg)
 
 	// Repositories
 	ec2Repo := ec2.NewEC2Repository(ec2Client)
 	s3Repo := s3.NewS3Repository(s3Client)
+	ecsRepo := ecs.NewECSRepository(ecsClient)
+	elbv2Repo := elbv2.NewELBV2Repository(elbv2Client)
 
 	// Services
 	ec2Svc := ec2.NewEC2Service(ec2Repo)
 	s3Svc := s3.NewS3Service(s3Repo)
+	ecsSvc := ecs.NewECSService(ecsRepo)
+	elbv2Svc := elbv2.NewELBV2Service(elbv2Repo)
 
 	// HCL Generator
 	hclGenerator := hcl.NewHCLGenerator()
@@ -147,7 +236,7 @@ func BuildApp(ctx context.Context) (*App, error) {
 	fileWriter := writer.NewFileWriter()
 
 	// App
-	app := NewApp(ec2Svc, s3Svc, hclGenerator, fileWriter)
+	app := NewApp(s3Svc, ec2Svc, ecsSvc, elbv2Svc, hclGenerator, fileWriter)
 
 	return app, nil
 } 
