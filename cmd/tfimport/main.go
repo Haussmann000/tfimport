@@ -49,7 +49,7 @@ func NewApp(
 	}
 }
 
-func (a *App) Run(ctx context.Context, resourceTypes string, resourceName string, clusterName string) error {
+func (a *App) Run(ctx context.Context, resourceTypes string, resourceName string, clusterName string, securityGroupID string) error {
 	types := strings.Split(resourceTypes, ",")
 	for _, resourceType := range types {
 		switch resourceType {
@@ -75,6 +75,11 @@ func (a *App) Run(ctx context.Context, resourceTypes string, resourceName string
 			}
 		case "iam":
 			err := a.processIam(ctx, resourceName)
+			if err != nil {
+				return err
+			}
+		case "security_group":
+			err := a.processSecurityGroup(ctx, securityGroupID)
 			if err != nil {
 				return err
 			}
@@ -188,11 +193,49 @@ func (a *App) processIam(ctx context.Context, nameContains string) error {
 	return a.writer.WriteFile("iam_import.tf", importFile)
 }
 
+func (a *App) processSecurityGroup(ctx context.Context, sgIDsStr string) error {
+	if sgIDsStr == "" {
+		return nil
+	}
+
+	sgIDs := strings.Split(sgIDsStr, ",")
+	var validSgIDs []string
+	for _, id := range sgIDs {
+		trimmedID := strings.TrimSpace(id)
+		if trimmedID != "" {
+			validSgIDs = append(validSgIDs, trimmedID)
+		}
+	}
+
+	if len(validSgIDs) == 0 {
+		return nil
+	}
+
+	sgs, err := a.vpcService.ListSecurityGroups(ctx, validSgIDs)
+	if err != nil {
+		return err
+	}
+	if len(sgs) == 0 {
+		return nil
+	}
+
+	hclFile, importFile, err := a.generator.GenerateSecurityGroupBlocks(sgs)
+	if err != nil {
+		return err
+	}
+	err = a.writer.WriteFile("security_group_generated.tf", hclFile)
+	if err != nil {
+		return err
+	}
+	return a.writer.WriteFile("security_group_import.tf", importFile)
+}
+
 func main() {
-	var resourceTypes, resourceName, clusterName string
-	flag.StringVar(&resourceTypes, "resource-types", "", "aws resource type. s3, vpc, ecs, elbv2, iam")
+	var resourceTypes, resourceName, clusterName, securityGroupID string
+	flag.StringVar(&resourceTypes, "resource-types", "", "aws resource type. s3, vpc, ecs, elbv2, iam, security_group")
 	flag.StringVar(&resourceName, "resource-name", "", "aws resource name")
 	flag.StringVar(&clusterName, "cluster-name", "", "ecs cluster name")
+	flag.StringVar(&securityGroupID, "security-group-id", "", "comma separated security group ids")
 	flag.Parse()
 
 	if resourceTypes == "" {
@@ -212,7 +255,7 @@ func main() {
 
 	ec2Client := aws.NewEC2Client(cfg)
 	ec2Repo := ec2.NewEC2Repository(ec2Client)
-	vpcService := ec2.NewVPCService(ec2Repo)
+	vpcService := ec2.NewEC2Service(ec2Repo)
 
 	ecsClient := aws.NewECSClient(cfg)
 	ecsRepo := ecs.NewECSRepository(ecsClient)
@@ -239,7 +282,7 @@ func main() {
 		hclGenerator,
 	)
 
-	err = app.Run(ctx, resourceTypes, resourceName, clusterName)
+	err = app.Run(ctx, resourceTypes, resourceName, clusterName, securityGroupID)
 	if err != nil {
 		log.Fatalf("error: %v", err)
 	}

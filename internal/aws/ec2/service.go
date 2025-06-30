@@ -15,25 +15,34 @@ type Vpc struct {
 	Tags      map[string]string
 }
 
+// SecurityGroup はHCL生成に必要なセキュリティグループの情報を保持します。
+type SecurityGroup struct {
+	ID          string
+	Name        string
+	Description string
+	Tags        map[string]string
+}
+
 // Service はEC2関連のビジネスロジックを定義します。
 type Service interface {
 	ListVpcs(ctx context.Context, resourceName string) ([]Vpc, error)
+	ListSecurityGroups(ctx context.Context, groupIDs []string) ([]SecurityGroup, error)
 }
 
-// VPCService はServiceを実装します。
-type VPCService struct {
+// EC2Service はServiceを実装します。
+type EC2Service struct {
 	repo EC2RepositoryInterface
 }
 
-// NewVPCService は新しいVPCServiceを生成します。
-func NewVPCService(repo EC2RepositoryInterface) *VPCService {
-	return &VPCService{
+// NewEC2Service は新しいEC2Serviceを生成します。
+func NewEC2Service(repo EC2RepositoryInterface) *EC2Service {
+	return &EC2Service{
 		repo: repo,
 	}
 }
 
 // ListVpcs はVPCのリストを取得し、ドメインオブジェクトに変換します。
-func (s *VPCService) ListVpcs(ctx context.Context, resourceName string) ([]Vpc, error) {
+func (s *EC2Service) ListVpcs(ctx context.Context, resourceName string) ([]Vpc, error) {
 	var filters []types.Filter
 	if resourceName != "" {
 		filters = append(filters, types.Filter{
@@ -56,6 +65,29 @@ func (s *VPCService) ListVpcs(ctx context.Context, resourceName string) ([]Vpc, 
 		})
 	}
 	return vpcs, nil
+}
+
+// ListSecurityGroups は指定されたIDのセキュリティグループを取得します。
+func (s *EC2Service) ListSecurityGroups(ctx context.Context, groupIDs []string) ([]SecurityGroup, error) {
+	if len(groupIDs) == 0 {
+		return nil, nil
+	}
+	awsSgs, err := s.repo.DescribeSecurityGroups(ctx, groupIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	var sgs []SecurityGroup
+	for _, sg := range awsSgs {
+		sgs = append(sgs, SecurityGroup{
+			ID:          *sg.GroupId,
+			Name:        *sg.GroupName,
+			Description: *sg.Description,
+			Tags:        convertTags(sg.Tags),
+		})
+	}
+
+	return sgs, nil
 }
 
 func convertTags(tags []types.Tag) map[string]string {

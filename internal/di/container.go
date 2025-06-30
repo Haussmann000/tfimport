@@ -18,16 +18,17 @@ import (
 
 // RunOptions はコマンドラインから渡されるオプションを保持します。
 type RunOptions struct {
-	ResourceTypes []string
-	ResourceName  string
-	ClusterName   string
-	ServiceName   string
+	ResourceTypes   []string
+	ResourceName    string
+	ClusterName     string
+	ServiceName     string
+	SecurityGroupID string
 }
 
 // App はアプリケーションの主要なロジックをカプセル化します。
 type App struct {
 	s3Service  *s3.BucketService
-	vpcService *ec2.VPCService
+	ec2Service *ec2.EC2Service
 	ecsService *ecs.ECSService
 	elbService *elbv2.ELBV2Service
 	iamService *iam.IAMService
@@ -38,7 +39,7 @@ type App struct {
 // NewApp はAppのコンストラクタです。
 func NewApp(
 	s3s *s3.BucketService,
-	vs *ec2.VPCService,
+	es *ec2.EC2Service,
 	ecss *ecs.ECSService,
 	elbs *elbv2.ELBV2Service,
 	iams *iam.IAMService,
@@ -47,7 +48,7 @@ func NewApp(
 ) *App {
 	return &App{
 		s3Service:  s3s,
-		vpcService: vs,
+		ec2Service: es,
 		ecsService: ecss,
 		elbService: elbs,
 		iamService: iams,
@@ -80,6 +81,10 @@ func (a *App) Run(ctx context.Context, options RunOptions) error {
 			if err := a.processIam(ctx, options.ResourceName); err != nil {
 				return err
 			}
+		case "security_group":
+			if err := a.processSecurityGroup(ctx, options.SecurityGroupID); err != nil {
+				return err
+			}
 		default:
 			fmt.Printf("Unsupported resource type: %s\n", resourceType)
 		}
@@ -106,7 +111,7 @@ func (a *App) processS3(ctx context.Context, resourceName string) error {
 }
 
 func (a *App) processVpc(ctx context.Context, resourceName string) error {
-	vpcs, err := a.vpcService.ListVpcs(ctx, resourceName)
+	vpcs, err := a.ec2Service.ListVpcs(ctx, resourceName)
 	if err != nil {
 		return err
 	}
@@ -203,6 +208,44 @@ func (a *App) processIam(ctx context.Context, nameContains string) error {
 	return a.writer.WriteFile("iam_import.tf", importFile)
 }
 
+func (a *App) processSecurityGroup(ctx context.Context, sgIDsStr string) error {
+	if sgIDsStr == "" {
+		return nil
+	}
+
+	sgIDs := strings.Split(sgIDsStr, ",")
+	var validSgIDs []string
+	for _, id := range sgIDs {
+		trimmedID := strings.TrimSpace(id)
+		if trimmedID != "" {
+			validSgIDs = append(validSgIDs, trimmedID)
+		}
+	}
+
+	if len(validSgIDs) == 0 {
+		return nil
+	}
+
+	sgs, err := a.ec2Service.ListSecurityGroups(ctx, validSgIDs)
+	if err != nil {
+		return err
+	}
+
+	if len(sgs) == 0 {
+		return nil
+	}
+
+	hclFile, importFile, err := a.generator.GenerateSecurityGroupBlocks(sgs)
+	if err != nil {
+		return err
+	}
+	err = a.writer.WriteFile("security_group_generated.tf", hclFile)
+	if err != nil {
+		return err
+	}
+	return a.writer.WriteFile("security_group_import.tf", importFile)
+}
+
 // BuildApp は依存関係を解決してAppを構築します。
 func BuildApp(ctx context.Context) (*App, error) {
 	// AWS Config
@@ -216,18 +259,21 @@ func BuildApp(ctx context.Context) (*App, error) {
 	s3Client := aws.NewS3Client(awsCfg)
 	ecsClient := aws.NewECSClient(awsCfg)
 	elbv2Client := aws.NewELBV2Client(awsCfg)
+	iamClient := iam.NewIAMClient(awsCfg)
 
 	// Repositories
 	ec2Repo := ec2.NewEC2Repository(ec2Client)
 	s3Repo := s3.NewS3Repository(s3Client)
 	ecsRepo := ecs.NewECSRepository(ecsClient)
 	elbv2Repo := elbv2.NewELBV2Repository(elbv2Client)
+	iamRepo := iam.NewIAMRepository(iamClient)
 
 	// Services
 	ec2Svc := ec2.NewEC2Service(ec2Repo)
 	s3Svc := s3.NewS3Service(s3Repo)
 	ecsSvc := ecs.NewECSService(ecsRepo)
 	elbv2Svc := elbv2.NewELBV2Service(elbv2Repo)
+	iamSvc := iam.NewIAMService(iamRepo)
 
 	// HCL Generator
 	hclGenerator := hcl.NewHCLGenerator()
@@ -236,7 +282,7 @@ func BuildApp(ctx context.Context) (*App, error) {
 	fileWriter := writer.NewFileWriter()
 
 	// App
-	app := NewApp(s3Svc, ec2Svc, ecsSvc, elbv2Svc, hclGenerator, fileWriter)
+	app := NewApp(s3Svc, ec2Svc, ecsSvc, elbv2Svc, iamSvc, fileWriter, hclGenerator)
 
 	return app, nil
 } 

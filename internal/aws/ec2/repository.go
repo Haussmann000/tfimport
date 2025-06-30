@@ -11,6 +11,7 @@ import (
 // EC2RepositoryInterface はEC2リソースへのアクセスを抽象化します。
 type EC2RepositoryInterface interface {
 	DescribeVpcs(ctx context.Context, filters []types.Filter) ([]types.Vpc, error)
+	DescribeSecurityGroups(ctx context.Context, groupIds []string) ([]types.SecurityGroup, error)
 }
 
 // EC2Repository はEC2RepositoryInterfaceを実装します。
@@ -35,4 +36,16 @@ func (r *EC2Repository) DescribeVpcs(ctx context.Context, filters []types.Filter
 		return nil, err
 	}
 	return result.Vpcs, nil
+}
+
+// DescribeSecurityGroups はAWSからSecurityGroupのリストを取得します。
+func (r *EC2Repository) DescribeSecurityGroups(ctx context.Context, groupIds []string) ([]types.SecurityGroup, error) {
+	input := &ec2.DescribeSecurityGroupsInput{
+		GroupIds: groupIds,
+	}
+	result, err := r.client.DescribeSecurityGroups(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	return result.SecurityGroups, nil
 } 

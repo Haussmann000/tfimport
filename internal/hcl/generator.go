@@ -56,6 +56,41 @@ func (g *HCLGenerator) GenerateVpcBlocks(vpcs []ec2.Vpc) (*hclwrite.File, *hclwr
 	return resourceFile, importFile, nil
 }
 
+// GenerateSecurityGroupBlocks はSecurity Groupリソースのresourceブロックとimportブロックを生成します。
+func (g *HCLGenerator) GenerateSecurityGroupBlocks(sgs []ec2.SecurityGroup) (*hclwrite.File, *hclwrite.File, error) {
+	resourceFile := hclwrite.NewEmptyFile()
+	importFile := hclwrite.NewEmptyFile()
+	resourceBody := resourceFile.Body()
+	importBody := importFile.Body()
+
+	for i, sg := range sgs {
+		resourceName := fmt.Sprintf("sg_%d", i)
+		resourceType := "aws_security_group"
+
+		// importブロックの生成
+		importBlock := importBody.AppendNewBlock("import", nil)
+		importBody.AppendNewline()
+		importBlock.Body().SetAttributeValue("to", cty.StringVal(resourceType+"."+resourceName))
+		importBlock.Body().SetAttributeValue("id", cty.StringVal(sg.ID))
+
+		// resourceブロックの生成
+		sgBlock := resourceBody.AppendNewBlock("resource", []string{resourceType, resourceName})
+		resourceBody.AppendNewline()
+		sgBlock.Body().SetAttributeValue("name", cty.StringVal(sg.Name))
+		sgBlock.Body().SetAttributeValue("description", cty.StringVal(sg.Description))
+
+		if len(sg.Tags) > 0 {
+			tagMap := make(map[string]cty.Value)
+			for k, v := range sg.Tags {
+				tagMap[k] = cty.StringVal(v)
+			}
+			sgBlock.Body().SetAttributeValue("tags", cty.MapVal(tagMap))
+		}
+	}
+
+	return resourceFile, importFile, nil
+}
+
 // GenerateS3BucketBlocks はS3バケットリソースのresourceブロックとimportブロックを生成します。
 func (g *HCLGenerator) GenerateS3BucketBlocks(buckets []s3.Bucket) (*hclwrite.File, *hclwrite.File, error) {
 	resourceFile := hclwrite.NewEmptyFile()
