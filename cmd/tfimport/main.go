@@ -4,238 +4,22 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log"
 	"strings"
 
-	"github.com/Haussmann000/tfimport/internal/aws"
-	"github.com/Haussmann000/tfimport/internal/aws/ec2"
-	"github.com/Haussmann000/tfimport/internal/aws/ecs"
-	"github.com/Haussmann000/tfimport/internal/aws/elbv2"
-	"github.com/Haussmann000/tfimport/internal/aws/iam"
-	"github.com/Haussmann000/tfimport/internal/aws/s3"
-	"github.com/Haussmann000/tfimport/internal/hcl"
-	"github.com/Haussmann000/tfimport/internal/writer"
-	"golang.org/x/sync/errgroup"
+	"github.com/Haussmann000/tfimport/internal/di"
 )
 
-type App struct {
-	s3Service  s3.Service
-	vpcService ec2.Service
-	ecsService ecs.Service
-	elbService elbv2.Service
-	iamService iam.Service
-	writer     *writer.FileWriter
-	generator  *hcl.HCLGenerator
-}
-
-func NewApp(
-	s3s s3.Service,
-	vs ec2.Service,
-	ecss ecs.Service,
-	elbs elbv2.Service,
-	iams iam.Service,
-	w *writer.FileWriter,
-	g *hcl.HCLGenerator,
-) *App {
-	return &App{
-		s3Service:  s3s,
-		vpcService: vs,
-		ecsService: ecss,
-		elbService: elbs,
-		iamService: iams,
-		writer:     w,
-		generator:  g,
-	}
-}
-
-func (a *App) Run(ctx context.Context, resourceTypes string, resourceName string, clusterName string, securityGroupID string) error {
-	types := strings.Split(resourceTypes, ",")
-	for _, resourceType := range types {
-		switch resourceType {
-		case "s3":
-			err := a.processS3(ctx, resourceName)
-			if err != nil {
-				return err
-			}
-		case "vpc":
-			err := a.processVpc(ctx, resourceName)
-			if err != nil {
-				return err
-			}
-		case "ecs":
-			err := a.processEcs(ctx, clusterName, resourceName)
-			if err != nil {
-				return err
-			}
-		case "elbv2":
-			err := a.processElb(ctx, resourceName)
-			if err != nil {
-				return err
-			}
-		case "iam":
-			err := a.processIam(ctx, resourceName)
-			if err != nil {
-				return err
-			}
-		case "security_group":
-			err := a.processSecurityGroup(ctx, securityGroupID)
-			if err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf("unsupported resource type: %s", resourceType)
-		}
-	}
-	return nil
-}
-
-func (a *App) processS3(ctx context.Context, resourceName string) error {
-	buckets, err := a.s3Service.ListBuckets(ctx, resourceName)
-	if err != nil {
-		return err
-	}
-	hclFile, importFile, err := a.generator.GenerateS3BucketBlocks(buckets)
-	if err != nil {
-		return err
-	}
-	err = a.writer.WriteFile("s3_generated.tf", hclFile)
-	if err != nil {
-		return err
-	}
-	return a.writer.WriteFile("s3_import.tf", importFile)
-}
-
-func (a *App) processVpc(ctx context.Context, resourceName string) error {
-	vpcs, err := a.vpcService.ListVpcs(ctx, resourceName)
-	if err != nil {
-		return err
-	}
-	hclFile, importFile, err := a.generator.GenerateVpcBlocks(vpcs)
-	if err != nil {
-		return err
-	}
-	err = a.writer.WriteFile("vpc_generated.tf", hclFile)
-	if err != nil {
-		return err
-	}
-	return a.writer.WriteFile("vpc_import.tf", importFile)
-}
-
-func (a *App) processEcs(ctx context.Context, clusterName, serviceName string) error {
-	var clusters []ecs.Cluster
-	if clusterName != "" {
-		cls, err := a.ecsService.GetClusters(ctx, clusterName, serviceName)
-		if err != nil {
-			return err
-		}
-		clusters = cls
-	}
-
-	hclFile, importFile, err := a.generator.GenerateEcsBlocks(clusters)
-	if err != nil {
-		return err
-	}
-	err = a.writer.WriteFile("ecs_generated.tf", hclFile)
-	if err != nil {
-		return err
-	}
-	return a.writer.WriteFile("ecs_import.tf", importFile)
-}
-
-func (a *App) processElb(ctx context.Context, resourceName string) error {
-	lbs, err := a.elbService.ListLoadBalancers(ctx, resourceName)
-	if err != nil {
-		return err
-	}
-	
-	hclFile, importFile, err := a.generator.GenerateElbBlocks(lbs)
-	if err != nil {
-		return err
-	}
-	err = a.writer.WriteFile("elb_generated.tf", hclFile)
-	if err != nil {
-		return err
-	}
-	return a.writer.WriteFile("elb_import.tf", importFile)
-}
-
-func (a *App) processIam(ctx context.Context, nameContains string) error {
-	var policies []iam.Policy
-	var roles []iam.Role
-	var eg errgroup.Group
-
-	eg.Go(func() error {
-		var err error
-		policies, err = a.iamService.ListPolicies(ctx, nameContains)
-		return err
-	})
-
-	eg.Go(func() error {
-		var err error
-		roles, err = a.iamService.ListRoles(ctx, nameContains)
-		return err
-	})
-
-	if err := eg.Wait(); err != nil {
-		return err
-	}
-
-	hclFile, importFile, err := a.generator.GenerateIamBlocks(policies, roles)
-	if err != nil {
-		return err
-	}
-
-	err = a.writer.WriteFile("iam_generated.tf", hclFile)
-	if err != nil {
-		return err
-	}
-	return a.writer.WriteFile("iam_import.tf", importFile)
-}
-
-func (a *App) processSecurityGroup(ctx context.Context, sgIDsStr string) error {
-	if sgIDsStr == "" {
-		return nil
-	}
-
-	sgIDs := strings.Split(sgIDsStr, ",")
-	var validSgIDs []string
-	for _, id := range sgIDs {
-		trimmedID := strings.TrimSpace(id)
-		if trimmedID != "" {
-			validSgIDs = append(validSgIDs, trimmedID)
-		}
-	}
-
-	if len(validSgIDs) == 0 {
-		return nil
-	}
-
-	sgs, err := a.vpcService.ListSecurityGroups(ctx, validSgIDs)
-	if err != nil {
-		return err
-	}
-	if len(sgs) == 0 {
-		return nil
-	}
-
-	hclFile, importFile, err := a.generator.GenerateSecurityGroupBlocks(sgs)
-	if err != nil {
-		return err
-	}
-	err = a.writer.WriteFile("security_group_generated.tf", hclFile)
-	if err != nil {
-		return err
-	}
-	return a.writer.WriteFile("security_group_import.tf", importFile)
-}
-
 func main() {
-	var resourceTypes, resourceName, clusterName, securityGroupID string
-	flag.StringVar(&resourceTypes, "resource-types", "", "aws resource type. s3, vpc, ecs, elbv2, iam, security_group")
+	var resourceTypes, resourceName, clusterName, serviceName, securityGroupID, dbClusterIdentifier, dbInstanceIdentifier string
+	flag.StringVar(&resourceTypes, "resource-types", "", "aws resource type. s3, vpc, ecs, elbv2, iam, security_group, rds")
 	flag.StringVar(&resourceName, "resource-name", "", "aws resource name")
 	flag.StringVar(&clusterName, "cluster-name", "", "ecs cluster name")
+	flag.StringVar(&serviceName, "service-name", "", "ecs service name")
 	flag.StringVar(&securityGroupID, "security-group-id", "", "comma separated security group ids")
+	flag.StringVar(&dbClusterIdentifier, "db-cluster-identifier", "", "rds db cluster identifier")
+	flag.StringVar(&dbInstanceIdentifier, "db-instance-identifier", "", "rds db instance identifier")
+
 	flag.Parse()
 
 	if resourceTypes == "" {
@@ -243,47 +27,22 @@ func main() {
 	}
 
 	ctx := context.Background()
-	cfg, err := aws.NewConfig(ctx)
+	app, err := di.BuildApp(ctx)
 	if err != nil {
-		log.Fatalf("failed to load aws config: %v", err)
+		log.Fatalf("failed to build app: %v", err)
 	}
 
-	// Manual DI
-	s3Client := aws.NewS3Client(cfg)
-	s3Repo := s3.NewS3Repository(s3Client)
-	s3Service := s3.NewBucketService(s3Repo)
+	options := di.RunOptions{
+		ResourceTypes:        strings.Split(resourceTypes, ","),
+		ResourceName:         resourceName,
+		ClusterName:          clusterName,
+		ServiceName:          serviceName,
+		SecurityGroupID:      securityGroupID,
+		DBClusterIdentifier:  dbClusterIdentifier,
+		DBInstanceIdentifier: dbInstanceIdentifier,
+	}
 
-	ec2Client := aws.NewEC2Client(cfg)
-	ec2Repo := ec2.NewEC2Repository(ec2Client)
-	vpcService := ec2.NewEC2Service(ec2Repo)
-
-	ecsClient := aws.NewECSClient(cfg)
-	ecsRepo := ecs.NewECSRepository(ecsClient)
-	ecsService := ecs.NewECSService(ecsRepo)
-
-	elbClient := aws.NewELBV2Client(cfg)
-	elbRepo := elbv2.NewELBV2Repository(elbClient)
-	elbService := elbv2.NewELBV2Service(elbRepo)
-
-	iamClient := iam.NewIAMClient(cfg)
-	iamRepo := iam.NewIAMRepository(iamClient)
-	iamService := iam.NewIAMService(iamRepo)
-
-	hclGenerator := hcl.NewHCLGenerator()
-	fileWriter := writer.NewFileWriter()
-
-	app := NewApp(
-		s3Service,
-		vpcService,
-		ecsService,
-		elbService,
-		iamService,
-		fileWriter,
-		hclGenerator,
-	)
-
-	err = app.Run(ctx, resourceTypes, resourceName, clusterName, securityGroupID)
-	if err != nil {
-		log.Fatalf("error: %v", err)
+	if err := app.Run(ctx, options); err != nil {
+		log.Fatalf("failed to run app: %v", err)
 	}
 }

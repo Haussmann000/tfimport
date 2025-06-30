@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Haussmann000/tfimport/internal/aws"
 	"github.com/Haussmann000/tfimport/internal/aws/ec2"
 	"github.com/Haussmann000/tfimport/internal/aws/ecs"
 	"github.com/Haussmann000/tfimport/internal/aws/elbv2"
 	"github.com/Haussmann000/tfimport/internal/aws/iam"
+	"github.com/Haussmann000/tfimport/internal/aws/rds"
 	"github.com/Haussmann000/tfimport/internal/aws/s3"
 	"github.com/Haussmann000/tfimport/internal/hcl"
 	"github.com/Haussmann000/tfimport/internal/writer"
@@ -23,6 +25,8 @@ type RunOptions struct {
 	ClusterName     string
 	ServiceName     string
 	SecurityGroupID string
+	DBClusterIdentifier string
+	DBInstanceIdentifier string
 }
 
 // App はアプリケーションの主要なロジックをカプセル化します。
@@ -32,6 +36,7 @@ type App struct {
 	ecsService *ecs.ECSService
 	elbService *elbv2.ELBV2Service
 	iamService *iam.IAMService
+	rdsService *rds.RDSService
 	writer     *writer.FileWriter
 	generator  *hcl.HCLGenerator
 }
@@ -43,6 +48,7 @@ func NewApp(
 	ecss *ecs.ECSService,
 	elbs *elbv2.ELBV2Service,
 	iams *iam.IAMService,
+	rdss *rds.RDSService,
 	w *writer.FileWriter,
 	g *hcl.HCLGenerator,
 ) *App {
@@ -52,6 +58,7 @@ func NewApp(
 		ecsService: ecss,
 		elbService: elbs,
 		iamService: iams,
+		rdsService: rdss,
 		writer:     w,
 		generator:  g,
 	}
@@ -83,6 +90,10 @@ func (a *App) Run(ctx context.Context, options RunOptions) error {
 			}
 		case "security_group":
 			if err := a.processSecurityGroup(ctx, options.SecurityGroupID); err != nil {
+				return err
+			}
+		case "rds":
+			if err := a.processRds(ctx, options); err != nil {
 				return err
 			}
 		default:
@@ -153,7 +164,7 @@ func (a *App) processElb(ctx context.Context, resourceName string) error {
 	var lbs []*elbv2.LoadBalancer
 	var err error
 	if resourceName == "" {
-		lbs, err = a.elbService.ListLoadBalancers(ctx)
+		lbs, err = a.elbService.ListLoadBalancers(ctx, resourceName)
 	} else {
 		var lb *elbv2.LoadBalancer
 		lb, err = a.elbService.GetLoadBalancer(ctx, resourceName)
@@ -246,43 +257,158 @@ func (a *App) processSecurityGroup(ctx context.Context, sgIDsStr string) error {
 	return a.writer.WriteFile("security_group_import.tf", importFile)
 }
 
-// BuildApp は依存関係を解決してAppを構築します。
-func BuildApp(ctx context.Context) (*App, error) {
-	// AWS Config
-	awsCfg, err := aws.NewConfig(ctx)
-	if err != nil {
-		return nil, err
+func (a *App) processRds(ctx context.Context, options RunOptions) error {
+	var clusters []rds.DBCluster
+	var instances []rds.DBInstance
+	var pgs []rds.DBParameterGroup
+	var err error
+
+	// Case 1: Specific cluster identifier is provided.
+	if options.DBClusterIdentifier != "" {
+		clusters, err = a.rdsService.ListDBClusters(ctx, options.DBClusterIdentifier)
+		if err != nil {
+			return err
+		}
+		if len(clusters) == 0 {
+			fmt.Printf("No cluster found with identifier: %s\n", options.DBClusterIdentifier)
+			return nil
+		}
+
+		pgNames := make(map[string]struct{})
+		instanceIdentifiers := make(map[string]struct{})
+
+		for _, c := range clusters {
+			if c.DBClusterParameterGroup != "" {
+				pgNames[c.DBClusterParameterGroup] = struct{}{}
+			}
+			for _, memberID := range c.MemberIdentifiers {
+				instanceIdentifiers[memberID] = struct{}{}
+			}
+		}
+
+		for id := range instanceIdentifiers {
+			memberInstances, err := a.rdsService.ListDBInstances(ctx, id)
+			if err != nil {
+				return err
+			}
+			instances = append(instances, memberInstances...)
+		}
+
+		for _, inst := range instances {
+			for _, pgName := range inst.DBParameterGroups {
+				pgNames[pgName] = struct{}{}
+			}
+		}
+
+		for name := range pgNames {
+			paramGroups, err := a.rdsService.ListDBParameterGroups(ctx, name)
+			if err != nil {
+				return err
+			}
+			pgs = append(pgs, paramGroups...)
+		}
+
+	// Case 2: Specific instance identifier is provided (but not cluster).
+	} else if options.DBInstanceIdentifier != "" {
+		instances, err = a.rdsService.ListDBInstances(ctx, options.DBInstanceIdentifier)
+		if err != nil {
+			return err
+		}
+
+		pgNames := make(map[string]struct{})
+		for _, inst := range instances {
+			for _, pgName := range inst.DBParameterGroups {
+				pgNames[pgName] = struct{}{}
+			}
+		}
+		for name := range pgNames {
+			paramGroups, err := a.rdsService.ListDBParameterGroups(ctx, name)
+			if err != nil {
+				return err
+			}
+			pgs = append(pgs, paramGroups...)
+		}
+	
+	// Case 3: No specific identifier, fetch all.
+	} else {
+		var eg errgroup.Group
+
+		eg.Go(func() error {
+			var err error
+			clusters, err = a.rdsService.ListDBClusters(ctx, "")
+			return err
+		})
+
+		eg.Go(func() error {
+			var err error
+			instances, err = a.rdsService.ListDBInstances(ctx, "")
+			return err
+		})
+
+		eg.Go(func() error {
+			var err error
+			pgs, err = a.rdsService.ListDBParameterGroups(ctx, options.ResourceName)
+			return err
+		})
+
+		if err := eg.Wait(); err != nil {
+			return err
+		}
 	}
 
-	// Clients
-	ec2Client := aws.NewEC2Client(awsCfg)
+	hclFile, importFile, err := a.generator.GenerateRdsBlocks(clusters, instances, pgs)
+	if err != nil {
+		return err
+	}
+
+	err = a.writer.WriteFile("rds_generated.tf", hclFile)
+	if err != nil {
+		return err
+	}
+	return a.writer.WriteFile("rds_import.tf", importFile)
+}
+
+// BuildApp は依存関係を解決してAppを構築します。
+func BuildApp(ctx context.Context) (*App, error) {
+	awsCfg, err := aws.NewConfig(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AWS config: %w", err)
+	}
+
+	// S3
 	s3Client := aws.NewS3Client(awsCfg)
-	ecsClient := aws.NewECSClient(awsCfg)
-	elbv2Client := aws.NewELBV2Client(awsCfg)
-	iamClient := iam.NewIAMClient(awsCfg)
-
-	// Repositories
-	ec2Repo := ec2.NewEC2Repository(ec2Client)
 	s3Repo := s3.NewS3Repository(s3Client)
+	s3Service := s3.NewBucketService(s3Repo)
+
+	// EC2
+	ec2Client := aws.NewEC2Client(awsCfg)
+	ec2Repo := ec2.NewEC2Repository(ec2Client)
+	ec2Service := ec2.NewEC2Service(ec2Repo)
+
+	// ECS
+	ecsClient := aws.NewECSClient(awsCfg)
 	ecsRepo := ecs.NewECSRepository(ecsClient)
+	ecsService := ecs.NewECSService(ecsRepo)
+
+	// ELBv2
+	elbv2Client := aws.NewELBV2Client(awsCfg)
 	elbv2Repo := elbv2.NewELBV2Repository(elbv2Client)
+	elbService := elbv2.NewELBV2Service(elbv2Repo)
+
+	// IAM
+	iamClient := aws.NewIAMClient(awsCfg)
 	iamRepo := iam.NewIAMRepository(iamClient)
+	iamService := iam.NewIAMService(iamRepo)
 
-	// Services
-	ec2Svc := ec2.NewEC2Service(ec2Repo)
-	s3Svc := s3.NewS3Service(s3Repo)
-	ecsSvc := ecs.NewECSService(ecsRepo)
-	elbv2Svc := elbv2.NewELBV2Service(elbv2Repo)
-	iamSvc := iam.NewIAMService(iamRepo)
+	// rds
+	rdsClient := aws.NewRDSClient(awsCfg)
+	rdsRepo := rds.NewRDSRepository(rdsClient)
+	rdsService := rds.NewRDSService(rdsRepo)
 
-	// HCL Generator
-	hclGenerator := hcl.NewHCLGenerator()
+	writer := writer.NewFileWriter()
+	generator := hcl.NewHCLGenerator()
 
-	// File Writer
-	fileWriter := writer.NewFileWriter()
-
-	// App
-	app := NewApp(s3Svc, ec2Svc, ecsSvc, elbv2Svc, iamSvc, fileWriter, hclGenerator)
+	app := NewApp(s3Service, ec2Service, ecsService, elbService, iamService, rdsService, writer, generator)
 
 	return app, nil
 } 

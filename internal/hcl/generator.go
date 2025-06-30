@@ -8,6 +8,7 @@ import (
 	"github.com/Haussmann000/tfimport/internal/aws/ecs"
 	"github.com/Haussmann000/tfimport/internal/aws/elbv2"
 	"github.com/Haussmann000/tfimport/internal/aws/iam"
+	"github.com/Haussmann000/tfimport/internal/aws/rds"
 	"github.com/Haussmann000/tfimport/internal/aws/s3"
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclwrite"
@@ -372,6 +373,54 @@ func (g *HCLGenerator) GenerateElbBlocks(lbs []*elbv2.LoadBalancer) (*hclwrite.F
 	return resourceFile, importFile, nil
 }
 
+// GenerateRdsBlocks はRDSリソースのresourceブロックとimportブロックを生成します。
+func (g *HCLGenerator) GenerateRdsBlocks(clusters []rds.DBCluster, instances []rds.DBInstance, pgs []rds.DBParameterGroup) (*hclwrite.File, *hclwrite.File, error) {
+	resourceFile := hclwrite.NewEmptyFile()
+	importFile := hclwrite.NewEmptyFile()
+	resourceBody := resourceFile.Body()
+	importBody := importFile.Body()
+
+	for _, cluster := range clusters {
+		resourceType := "aws_rds_cluster"
+		resourceName := g.sanitize(cluster.Identifier)
+		g.appendImportBlock(importBody, resourceType+"."+resourceName, cluster.Identifier)
+		clusterBlock := g.appendResourceBlock(resourceBody, resourceType, resourceName)
+		clusterBlock.Body().SetAttributeValue("cluster_identifier", cty.StringVal(cluster.Identifier))
+		clusterBlock.Body().SetAttributeValue("engine", cty.StringVal(cluster.Engine))
+		clusterBlock.Body().SetAttributeValue("engine_mode", cty.StringVal(cluster.EngineMode))
+		if len(cluster.Tags) > 0 {
+			g.appendTags(clusterBlock.Body(), cluster.Tags)
+		}
+	}
+
+	for _, instance := range instances {
+		resourceType := "aws_db_instance"
+		resourceName := g.sanitize(instance.Identifier)
+		g.appendImportBlock(importBody, resourceType+"."+resourceName, instance.Identifier)
+		instanceBlock := g.appendResourceBlock(resourceBody, resourceType, resourceName)
+		instanceBlock.Body().SetAttributeValue("identifier", cty.StringVal(instance.Identifier))
+		instanceBlock.Body().SetAttributeValue("engine", cty.StringVal(instance.Engine))
+		instanceBlock.Body().SetAttributeValue("instance_class", cty.StringVal(instance.InstanceClass))
+		if len(instance.Tags) > 0 {
+			g.appendTags(instanceBlock.Body(), instance.Tags)
+		}
+	}
+
+	for _, pg := range pgs {
+		resourceType := "aws_db_parameter_group"
+		resourceName := g.sanitize(pg.Name)
+		g.appendImportBlock(importBody, resourceType+"."+resourceName, pg.Name)
+		pgBlock := g.appendResourceBlock(resourceBody, resourceType, resourceName)
+		pgBlock.Body().SetAttributeValue("name", cty.StringVal(pg.Name))
+		pgBlock.Body().SetAttributeValue("family", cty.StringVal(pg.Family))
+		if len(pg.Tags) > 0 {
+			g.appendTags(pgBlock.Body(), pg.Tags)
+		}
+	}
+
+	return resourceFile, importFile, nil
+}
+
 func (g *HCLGenerator) appendImportBlock(body *hclwrite.Body, to, id string) {
 	importBlock := body.AppendNewBlock("import", nil)
 	// "to" is a resource address, not a string. e.g., aws_ecs_cluster.my_cluster
@@ -389,6 +438,18 @@ func (g *HCLGenerator) appendResourceBlock(body *hclwrite.Body, resourceType, re
 	block := body.AppendNewBlock("resource", []string{resourceType, resourceName})
 	body.AppendNewline()
 	return block
+}
+
+func (g *HCLGenerator) appendTags(body *hclwrite.Body, tags map[string]string) {
+	tagMap := make(map[string]cty.Value)
+	for k, v := range tags {
+		tagMap[k] = cty.StringVal(v)
+	}
+	body.SetAttributeValue("tags", cty.MapVal(tagMap))
+}
+
+func (g *HCLGenerator) sanitize(name string) string {
+	return strings.ReplaceAll(name, "-", "_")
 }
 
 // GenerateIamBlocks はIAMリソースのresourceブロックとimportブロックを生成します。

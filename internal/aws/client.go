@@ -11,6 +11,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	elbv2 "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
+	"github.com/aws/aws-sdk-go-v2/service/rds"
 )
 
 // NewConfig はAWSの設定をロードして返します。
@@ -40,6 +42,16 @@ func NewECSClient(cfg aws.Config) *ecs.Client {
 // NewELBV2Client はELBV2サービスクライアントを生成します。
 func NewELBV2Client(cfg aws.Config) *elbv2.Client {
 	return elbv2.NewFromConfig(cfg)
+}
+
+// NewIAMClient はIAMサービスクライアントを生成します。
+func NewIAMClient(cfg aws.Config) *iam.Client {
+	return iam.NewFromConfig(cfg)
+}
+
+// NewRDSClient はRDSサービスクライアントを生成します。
+func NewRDSClient(cfg aws.Config) *rds.Client {
+	return rds.NewFromConfig(cfg)
 }
 
 // NewS3Client ... (今後他のクライアントもここに追加) 
