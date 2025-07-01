@@ -20,12 +20,13 @@ import (
 
 // RunOptions はコマンドラインから渡されるオプションを保持します。
 type RunOptions struct {
-	ResourceTypes   []string
-	ResourceName    string
-	ClusterName     string
-	ServiceName     string
-	SecurityGroupID string
-	DBClusterIdentifier string
+	ResourceTypes        []string
+	ResourceName         string
+	BucketName           string
+	ClusterName          string
+	ServiceName          string
+	SecurityGroupID      string
+	DBClusterIdentifier  string
 	DBInstanceIdentifier string
 }
 
@@ -73,7 +74,7 @@ func (a *App) Run(ctx context.Context, options RunOptions) error {
 				return err
 			}
 		case "s3":
-			if err := a.processS3(ctx, options.ResourceName); err != nil {
+			if err := a.processS3(ctx, options); err != nil {
 				return err
 			}
 		case "ecs":
@@ -105,8 +106,11 @@ func (a *App) Run(ctx context.Context, options RunOptions) error {
 	return nil
 }
 
-func (a *App) processS3(ctx context.Context, resourceName string) error {
-	buckets, err := a.s3Service.ListBuckets(ctx, resourceName)
+func (a *App) processS3(ctx context.Context, options RunOptions) error {
+	if options.BucketName == "" {
+		return nil
+	}
+	buckets, err := a.s3Service.ListBuckets(ctx, options.BucketName)
 	if err != nil {
 		return err
 	}

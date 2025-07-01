@@ -11,9 +11,10 @@ import (
 )
 
 func main() {
-	var resourceTypes, resourceName, clusterName, serviceName, securityGroupID, dbClusterIdentifier, dbInstanceIdentifier string
+	var resourceTypes, resourceName, clusterName, serviceName, securityGroupID, dbClusterIdentifier, dbInstanceIdentifier, bucketName string
 	flag.StringVar(&resourceTypes, "resource-types", "", "aws resource type. s3, vpc, ecs, elbv2, iam, security_group, rds")
-	flag.StringVar(&resourceName, "resource-name", "", "aws resource name")
+	flag.StringVar(&resourceName, "resource-name", "", "aws resource name (for vpc, elbv2, iam, rds parameter group)")
+	flag.StringVar(&bucketName, "bucket-name", "", "s3 bucket name")
 	flag.StringVar(&clusterName, "cluster-name", "", "ecs cluster name")
 	flag.StringVar(&serviceName, "service-name", "", "ecs service name")
 	flag.StringVar(&securityGroupID, "security-group-id", "", "comma separated security group ids")
@@ -35,6 +36,7 @@ func main() {
 	options := di.RunOptions{
 		ResourceTypes:        strings.Split(resourceTypes, ","),
 		ResourceName:         resourceName,
+		BucketName:           bucketName,
 		ClusterName:          clusterName,
 		ServiceName:          serviceName,
 		SecurityGroupID:      securityGroupID,
